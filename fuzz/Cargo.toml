@@ -1,0 +1,25 @@
+[package]
+name = "libunwinder-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.libunwinder]
+path = ".."
+features = ["__fuzz"]
+
+[[bin]]
+name = "dwarf"
+path = "fuzz_targets/dwarf.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

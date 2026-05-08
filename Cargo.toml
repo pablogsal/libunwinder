@@ -1,0 +1,51 @@
+[package]
+name = "libunwinder"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "libunwind-backed native unwinder for profilers"
+license = "MIT"
+repository = "https://github.com/pablogsal/libunwinder"
+readme = "README.md"
+keywords = ["profiler", "unwind", "libunwind", "dwarf"]
+categories = ["development-tools::profiling", "external-ffi-bindings"]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/build.rs",
+    "/docs/**",
+    "/src/**",
+    "/benches/**",
+    "/examples/**",
+    "/fixtures/**",
+    "/tests/**",
+    "/vendor/libunwind-dist/**",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
+[dependencies]
+libc = "0.2"
+memmap2 = "0.9.10"
+object = { version = "0.39", default-features = false, features = ["read", "std"] }
+
+[features]
+default = ["vendored"]
+vendored = []
+system-libunwind = []
+# Internal: exposes DWARF parser entry points to the `fuzz/` crate.
+# Not part of the public API.
+__fuzz = []
+
+[[bench]]
+name = "unwind"
+harness = false
+
+[build-dependencies]
+# Build vendored libunwind from a prepared v1.8.1 configure tree. No external
+# build crates needed - build.rs invokes the toolchain directly.

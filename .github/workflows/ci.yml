@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake gcc libtool libunwind-dev make pkg-config
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ matrix.arch }}
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Lint system libunwind
+        run: cargo clippy --locked --all-targets --no-default-features --features system-libunwind -- -D warnings
+
+      - name: Test vendored libunwind
+        run: cargo test --locked --all-targets
+
+      - name: Test system libunwind
+        run: cargo test --locked --all-targets --no-default-features --features system-libunwind
+
+      - name: Install coverage tool
+        run: cargo install cargo-llvm-cov --locked --version 0.8.5
+
+      - name: Coverage
+        run: cargo llvm-cov --locked --all-targets --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          flags: ${{ matrix.arch }}
+          fail_ci_if_error: false
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake gcc libtool libunwind-dev make pkg-config
+
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          v=$(grep '^rust-version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv
+
+      - name: Build with MSRV
+        run: cargo +${{ steps.msrv.outputs.version }} build --locked --all-targets
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
+  doc:
+    name: doc
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake gcc libtool libunwind-dev make pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: doc
+      - name: Build docs
+        run: cargo doc --locked --no-deps --all-features
+
+  asan:
+    name: asan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake gcc libtool libunwind-dev make pkg-config
+
+      - name: Install nightly toolchain
+        run: |
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustup default nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: asan
+
+      - name: Run tests under AddressSanitizer
+        env:
+          RUSTFLAGS: -Zsanitizer=address -Cdebug-assertions=on
+          RUSTDOCFLAGS: -Zsanitizer=address
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+        run: |
+          cargo test \
+            --locked --all-targets \
+            -Zbuild-std \
+            --target x86_64-unknown-linux-gnu
